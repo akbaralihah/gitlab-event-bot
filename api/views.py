@@ -13,7 +13,7 @@ from api.bot import send_message, edit_message, bot_answer
 from api.serializers import GitLabEventSerializer, TelegramWebhookSerializer
 from api.utils import save_telegram_message_id, get_telegram_message_id, delete_telegram_message_id, parse_group_info, \
     get_gitlab_mention
-from apps.models import GitlabProject, GitlabUser, TelegramAdmin, TelegramGroup
+from apps.models import GitlabProject, GitlabUser, TelegramGroup
 from root.settings import TELEGRAM_BOT_TOKEN, PROJECT_URL
 
 
@@ -317,7 +317,7 @@ class TelegramWebhookAPIView(APIView):
                     bot_answer(telegram_id, "🔑 Iltimos, GitLab ID'ingizni yuboring.")
                     return Response({'status': 'asking for gitlab_id'}, status=status.HTTP_200_OK)
 
-            is_admin = TelegramAdmin.objects.filter(telegram_id=telegram_id).exists()
+            is_admin = GitlabUser.objects.filter(telegram_id=telegram_id).exists()
             if not is_admin:
                 return Response({'status': 'unauthorized'}, status=status.HTTP_200_OK)
 

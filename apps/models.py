@@ -29,8 +29,17 @@ class GitlabProject(models.Model):
 
 class GitlabUser(models.Model):
     gitlab_id = models.BigIntegerField(unique=True)
-    gitlab_username = models.CharField(max_length=255)
+    gitlab_username = models.CharField(max_length=255, null=True)
+    gitlab_fullname = models.CharField(max_length=255, null=True)
+
     telegram_id = models.CharField(max_length=50)
+    telegram_full_name = models.CharField(max_length=255, null=True)
+    telegram_username = models.CharField(max_length=255, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    is_admin = models.BooleanField(default=False)
     projects = models.ManyToManyField('apps.GitlabProject', related_name='users')
 
     def __str__(self):
@@ -64,21 +73,6 @@ class GitLabEvent(models.Model):
         verbose_name = 'Event'
         verbose_name_plural = 'Events'
         db_table = 'gitlab_events'
-
-
-class TelegramAdmin(models.Model):
-    telegram_id = models.BigIntegerField(unique=True)
-    full_name = models.CharField(max_length=255)
-    username = models.CharField(max_length=255, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"{self.full_name} (@{self.username})"
-
-    class Meta:
-        verbose_name = 'TelegramAdmin'
-        verbose_name_plural = 'TelegramAdmins'
-        db_table = 'telegram_admins'
 
 
 class TelegramGroup(models.Model):

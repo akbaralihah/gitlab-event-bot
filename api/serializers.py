@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.models import GitLabEvent, GitlabProject, TelegramAdmin
+from apps.models import GitLabEvent, GitlabProject
 
 
 class GitLabEventSerializer(serializers.ModelSerializer):

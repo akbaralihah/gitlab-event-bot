@@ -1,5 +1,5 @@
 from django.contrib import admin
-from apps.models import GitlabProject, GitlabUser, GitLabEvent, TelegramGroup, TelegramAdmin
+from apps.models import GitlabProject, GitlabUser, GitLabEvent, TelegramGroup
 
 
 class GitlabUserInline(admin.TabularInline):
@@ -26,18 +26,13 @@ class GitlabProjectAdmin(admin.ModelAdmin):
 
 @admin.register(GitlabUser)
 class GitlabUserAdmin(admin.ModelAdmin):
-    list_display = ('gitlab_username', 'telegram_id')
+    list_display = ('gitlab_fullname', 'gitlab_username', 'telegram_username',)
     filter_horizontal = ('projects',)
 
 
 @admin.register(GitLabEvent)
 class GitLabEventAdmin(admin.ModelAdmin):
     list_display = ('gitlab_event', 'project', 'user_name', 'status', 'created_at')
-
-
-@admin.register(TelegramAdmin)
-class TelegramAdminAdmin(admin.ModelAdmin):
-    list_display = ('telegram_id', 'full_name', 'username', 'created_at')
 
 
 @admin.register(TelegramGroup)
