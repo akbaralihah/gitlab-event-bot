@@ -1,0 +1,68 @@
+import logging
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models import GitlabProject, GitLabEvent, GitlabUser
+from app.schemas.gitlab import ParsedEvent
+from app.services.cache import Cache
+from app.services.formatter import build_message
+from app.services.notify import send_or_edit
+from app.telegram.client import TelegramClient
+
+log = logging.getLogger(__name__)
+
+
+async def get_or_create_project(session: AsyncSession, name: str) -> GitlabProject:
+    query = select(GitlabProject).where(GitlabProject.name == name).options(selectinload(GitlabProject.telegram_group))
+    project = await session.scalar(query)
+    if project:
+        return project
+
+    session.add(GitlabProject(name=name))
+    try:
+        await session.commit()
+    except IntegrityError:  # created by a parallel request
+        await session.rollback()
+    return await session.scalar(query)
+
+
+async def process_event(session: AsyncSession, tg: TelegramClient, cache: Cache, event: ParsedEvent) -> str:
+    """Store the event and forward it to the project's Telegram group. Returns a status string."""
+    project = await get_or_create_project(session, event.project_name)
+
+    session.add(
+        GitLabEvent(
+            gitlab_event=event.kind,
+            project_id=project.id,
+            status=event.status,
+            branch=event.branch,
+            user_name=event.user.username,
+            duration=event.duration,
+        )
+    )
+    await session.commit()
+
+    group = project.telegram_group
+    if group is None or not group.is_active:
+        return "stored (no active telegram group)"
+
+    telegram_ids: dict[int, int] = {}
+    if event.gitlab_ids:
+        rows = await session.execute(
+            select(GitlabUser.gitlab_id, GitlabUser.telegram_id).where(GitlabUser.gitlab_id.in_(event.gitlab_ids))
+        )
+        telegram_ids = {gitlab_id: telegram_id for gitlab_id, telegram_id in rows}
+
+    await send_or_edit(
+        tg,
+        cache,
+        chat_id=group.chat_id,
+        thread_id=group.message_thread_id,
+        text=build_message(event, project, telegram_ids),
+        key=event.tracking_key,
+        final=event.is_final,
+    )
+    return "sent"
