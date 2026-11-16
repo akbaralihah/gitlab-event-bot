@@ -13,6 +13,19 @@ MR_FINAL_STATES = {Status.MERGED, Status.CLOSED}
 
 class GLProject(BaseModel):
     name: str
+    web_url: str | None = None
+    path_with_namespace: str | None = None
+
+
+class GLAuthor(BaseModel):
+    name: str | None = None
+
+
+class GLCommit(BaseModel):
+    id: str = ""
+    title: str = ""
+    url: str | None = None
+    author: GLAuthor = Field(default_factory=GLAuthor)
 
 
 class GLUser(BaseModel):
@@ -24,6 +37,11 @@ class GLUser(BaseModel):
 class PushPayload(BaseModel):
     project: GLProject
     ref: str = ""
+    before: str = ""
+    after: str = ""
+    ref_protected: bool = False
+    total_commits_count: int = 0
+    commits: list[GLCommit] = []
     user_id: int | None = None
     user_username: str | None = None
     user_name: str | None = None
@@ -74,6 +92,12 @@ class ParsedEvent:
     draft: bool = False
     assignees: list[GLUser] = field(default_factory=list)
     reviewers: list[GLUser] = field(default_factory=list)
+    # push details
+    commits: list[GLCommit] = field(default_factory=list)
+    total_commits: int = 0
+    compare_url: str | None = None
+    branch_url: str | None = None
+    protected: bool = False
     # Merge requests and pipelines are one Telegram message that gets edited.
     tracking_key: str | None = None
     # After a final event the message is not edited anymore.
@@ -160,13 +184,27 @@ def parse_event(header: str, data: dict) -> ParsedEvent:
 
     if kind == EventKind.PUSH:
         p = PushPayload.model_validate(data)
+        branch = _short_ref(p.ref)
+        zeros = "0" * 40
+        base = (p.project.web_url or "").rstrip("/")
+        if p.before == zeros:
+            status = Status.CREATED
+        elif p.after == zeros:
+            status = Status.DELETED
+        else:
+            status = Status.PUSHED
         return ParsedEvent(
             kind=kind,
             header=header,
             project_name=p.project.name,
-            status=Status.PUSHED,
-            branch=_short_ref(p.ref),
+            status=status,
+            branch=branch,
             user=GLUser(id=p.user_id, name=p.user_name, username=p.user_username),
+            commits=p.commits,
+            total_commits=p.total_commits_count or len(p.commits),
+            compare_url=f"{base}/-/compare/{p.before}...{p.after}" if base and status == Status.PUSHED else None,
+            branch_url=f"{base}/-/tree/{branch}" if base and status != Status.DELETED else None,
+            protected=p.ref_protected,
         )
 
     if kind == EventKind.MERGE_REQUEST:

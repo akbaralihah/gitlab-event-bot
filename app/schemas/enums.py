@@ -29,6 +29,7 @@ class Status(StrEnum):
     GitLab may send others: they are kept as the raw string."""
 
     PUSHED = "pushed"
+    DELETED = "deleted"
     # merge request / issue
     OPENED = "opened"
     REOPENED = "reopened"

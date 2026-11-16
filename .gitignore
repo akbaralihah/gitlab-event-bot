@@ -118,3 +118,4 @@ cython_debug/
 *.pyc
 local.env
 hooks
+Makefile
