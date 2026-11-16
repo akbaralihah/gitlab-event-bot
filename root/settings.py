@@ -109,7 +109,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'root.wsgi.application'
-# DATABASE_ROUTERS = ['routers.PostgresPrimaryRouter']
 
 # Database
 DATABASES = {
