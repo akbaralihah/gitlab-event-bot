@@ -34,15 +34,11 @@ INSTALLED_APPS = [
     'drf_spectacular',
 ]
 
-REDIS_HOST = os.getenv('REDIS_HOST')
-REDIS_PORT = os.getenv('REDIS_PORT')
-REDIS_DB = os.getenv('REDIS_DB')
-
 # CACHE
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+        "LOCATION": "redis://127.0.0.1:6379/0",
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         }
