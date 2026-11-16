@@ -1,22 +1,14 @@
 """Pydantic models of the GitLab webhook payloads (only the fields we use)
 and the normalized `ParsedEvent` the rest of the app works with."""
 from dataclasses import dataclass, field
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
-EventKind = Literal["push", "merge", "pipeline"]
+from app.schemas.enums import EVENT_HEADERS, OBJECT_KINDS, EventKind, Status
 
-# value of the X-Gitlab-Event header -> kind
-EVENT_HEADERS: dict[str, EventKind] = {
-    "Push Hook": "push",
-    "Merge Request Hook": "merge",
-    "Pipeline Hook": "pipeline",
-}
-
-APPROVAL_ACTIONS = {"approved", "unapproved", "approval", "unapproval"}
-MR_ACTION_LABELS = {"update": "updated", "reopen": "reopened"}
-MR_FINAL_STATES = {"merged", "closed"}
+APPROVAL_ACTIONS = {Status.APPROVED, Status.UNAPPROVED, Status.APPROVAL, Status.UNAPPROVAL}
+MR_ACTION_LABELS = {"update": Status.UPDATED, "reopen": Status.REOPENED}
+MR_FINAL_STATES = {Status.MERGED, Status.CLOSED}
 
 
 class GLProject(BaseModel):
@@ -72,7 +64,7 @@ class PipelinePayload(BaseModel):
 class ParsedEvent:
     kind: EventKind
     header: str  # original X-Gitlab-Event value, shown in the message
-    project_name: str
+    project_name: str | None
     status: str
     branch: str
     user: GLUser
@@ -93,22 +85,91 @@ class ParsedEvent:
         return {u.id for u in users if u.id is not None}
 
 
-def parse_event(header: str, data: dict) -> ParsedEvent | None:
-    """Return None for unsupported events. Raises pydantic.ValidationError on a bad payload."""
-    kind = EVENT_HEADERS.get(header)
+def _short_ref(ref: str | None) -> str:
+    ref = ref or ""
+    for prefix in ("refs/heads/", "refs/tags/"):
+        if ref.startswith(prefix):
+            return ref[len(prefix):]
+    return ref
 
-    if kind == "push":
+
+def _first(*values: object) -> str:
+    for value in values:
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def _detect_kind(header: str, data: dict) -> EventKind:
+    return EVENT_HEADERS.get(header) or OBJECT_KINDS.get(str(data.get("object_kind") or "")) or EventKind.UNKNOWN
+
+
+def _generic_user(data: dict) -> GLUser:
+    user = data.get("user")
+    if isinstance(user, dict):
+        return GLUser(id=user.get("id"), name=user.get("name"), username=user.get("username"))
+    return GLUser(id=data.get("user_id"), name=data.get("user_name"), username=data.get("user_username"))
+
+
+def _generic_project_name(data: dict) -> str | None:
+    project = data.get("project")
+    name = project.get("name") if isinstance(project, dict) else None
+    return _first(name, data.get("project_name"), data.get("group_name"), data.get("full_path")) or None
+
+
+def _generic_status(kind: EventKind, data: dict, attrs: dict) -> str:
+    if kind == EventKind.TAG_PUSH:
+        return Status.PUSHED
+    if kind == EventKind.JOB:
+        return _first(data.get("build_status"), data.get("status"))
+    if kind == EventKind.NOTE:
+        return _first(attrs.get("noteable_type"), attrs.get("action"), "commented").lower()
+    if kind == EventKind.FEATURE_FLAG:
+        return "enabled" if attrs.get("active") else "disabled"
+    return _first(
+        data.get("action"),
+        attrs.get("action"),
+        data.get("status"),
+        attrs.get("status"),
+        attrs.get("state"),
+        data.get("event_name"),
+        data.get("event_type"),
+    )
+
+
+def _parse_generic(kind: EventKind, header: str, data: dict) -> ParsedEvent:
+    """Tolerant parsing for the events we only store and log: nothing here may raise on a missing field."""
+    attrs = data.get("object_attributes")
+    attrs = attrs if isinstance(attrs, dict) else {}
+    return ParsedEvent(
+        kind=kind,
+        header=header,
+        project_name=_generic_project_name(data),
+        status=_generic_status(kind, data, attrs),
+        branch=_short_ref(_first(data.get("ref"), attrs.get("ref"))),
+        user=_generic_user(data),
+        duration=attrs.get("duration") if isinstance(attrs.get("duration"), int) else None,
+        url=_first(attrs.get("url"), data.get("url")) or None,
+    )
+
+
+def parse_event(header: str, data: dict) -> ParsedEvent:
+    """Never returns None: every event is accepted. Raises pydantic.ValidationError only for the three
+    events that are forwarded to Telegram when their payload is malformed."""
+    kind = _detect_kind(header, data)
+
+    if kind == EventKind.PUSH:
         p = PushPayload.model_validate(data)
         return ParsedEvent(
             kind=kind,
             header=header,
             project_name=p.project.name,
-            status="pushed",
-            branch=p.ref.split("/")[-1],
+            status=Status.PUSHED,
+            branch=_short_ref(p.ref),
             user=GLUser(id=p.user_id, name=p.user_name, username=p.user_username),
         )
 
-    if kind == "merge":
+    if kind == EventKind.MERGE_REQUEST:
         p = MergePayload.model_validate(data)
         a = p.object_attributes
         if a.action in APPROVAL_ACTIONS:
@@ -131,7 +192,7 @@ def parse_event(header: str, data: dict) -> ParsedEvent | None:
             is_final=a.state in MR_FINAL_STATES or a.action == "merge",
         )
 
-    if kind == "pipeline":
+    if kind == EventKind.PIPELINE:
         p = PipelinePayload.model_validate(data)
         a = p.object_attributes
         return ParsedEvent(
@@ -139,10 +200,10 @@ def parse_event(header: str, data: dict) -> ParsedEvent | None:
             header=header,
             project_name=p.project.name,
             status=a.status,
-            branch=(a.ref or "").split("/")[-1],
+            branch=_short_ref(a.ref),
             user=p.user or GLUser(),
             duration=a.duration,
             tracking_key=f"pipeline:{a.id}:{a.ref}",
         )
 
-    return None
+    return _parse_generic(kind, header, data)

@@ -1,26 +1,32 @@
 from html import escape
 
 from app.models import GitlabProject
+from app.schemas.enums import EventKind, Status
 from app.schemas.gitlab import GLUser, ParsedEvent
 
 STATUS_EMOJI = {
-    "pushed": "✅",
-    "opened": "✨",
-    "reopened": "🔄",
-    "updated": "📝",
-    "merged": "🤝",
-    "closed": "🔒",
-    "approved": "👍",
-    "unapproved": "👎",
-    "approval": "✅",
-    "unapproval": "❌",
-    "pending": "⏳",
-    "running": "🏃",
-    "success": "🟢",
-    "failed": "🔴",
-    "canceled": "⚪",
-    "skipped": "⏭️",
-    "manual": "✋",
+    Status.PUSHED: "✅",
+    Status.OPENED: "✨",
+    Status.REOPENED: "🔄",
+    Status.UPDATED: "📝",
+    Status.MERGED: "🤝",
+    Status.CLOSED: "🔒",
+    Status.APPROVED: "👍",
+    Status.UNAPPROVED: "👎",
+    Status.APPROVAL: "✅",
+    Status.UNAPPROVAL: "❌",
+    Status.CREATED: "🆕",
+    Status.PREPARING: "🛠",
+    Status.WAITING_FOR_RESOURCE: "⌛",
+    Status.PENDING: "⏳",
+    Status.RUNNING: "🏃",
+    Status.SUCCESS: "🟢",
+    Status.FAILED: "🔴",
+    Status.CANCELED: "⚪",
+    Status.SKIPPED: "⏭️",
+    Status.MANUAL: "✋",
+    Status.SCHEDULED: "🗓",
+    Status.BLOCKED: "⛔",
 }
 
 
@@ -42,14 +48,14 @@ def build_message(event: ParsedEvent, project: GitlabProject, telegram_ids: dict
 
     if project.show_project:
         lines.append(f"📣 <b>Project:</b> {_code(project.name)}")
-        if event.kind == "merge":
+        if event.kind == EventKind.MERGE_REQUEST:
             lines.append(f"📑 <b>Is Draft:</b> {_code(event.draft)}")
     if project.show_status:
         emoji = STATUS_EMOJI.get(event.status, "")
         status = f"{event.status} {emoji}".strip()
         lines.append(f"📌 <b>Status:</b> {_code(status)}")
     if project.show_branch:
-        if event.kind == "merge":
+        if event.kind == EventKind.MERGE_REQUEST:
             lines.append(f"🌿 <b>Source:</b> {_code(event.branch)}")
             lines.append(f"🎯 <b>Target:</b> {_code(event.target_branch)}")
         else:
@@ -64,7 +70,7 @@ def build_message(event: ParsedEvent, project: GitlabProject, telegram_ids: dict
             lines += [f"  • {mention(u, telegram_ids)}" for u in event.reviewers]
     if event.url:
         lines.append(f'🔗 <b>Link:</b> <a href="{escape(event.url, quote=True)}">tap to view</a>')
-    if project.show_duration and event.kind == "pipeline" and event.duration is not None:
+    if project.show_duration and event.kind == EventKind.PIPELINE and event.duration is not None:
         lines.append(f"⏳ <b>Duration:</b> {_code(f'{event.duration}s')}")
 
     return "\n".join(lines)

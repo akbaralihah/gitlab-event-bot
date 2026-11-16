@@ -13,6 +13,7 @@ from app.models import WebhookSecret
 from app.schemas.common import ErrorResponse, StatusResponse
 from app.schemas.gitlab import parse_event
 from app.services.cache import Cache
+from app.schemas.enums import EventKind
 from app.services import signature
 from app.services.gitlab_events import process_event
 from app.telegram.client import TelegramClient
@@ -76,43 +77,45 @@ REQUEST_BODY_EXAMPLES = {
     "/gitlab/webhook",
     summary="Вебхук GitLab",
     description=(
-        "Принимает события GitLab, сохраняет их в базе и отправляет сообщение в Telegram-группу проекта.\n\n"
-        "Поддерживаются заголовки `X-Gitlab-Event`: **Push Hook**, **Merge Request Hook**, **Pipeline Hook**. "
-        "Остальные события игнорируются.\n\n"
-        "Сообщения о merge request и pipeline **редактируются** при смене статуса, а не отправляются заново. "
-        "Проект создаётся автоматически при первом событии; привязать его к группе можно в админке.\n\n"
-        "Если в админке добавлен активный Signing Token, подпись `webhook-signature` должна ему соответствовать; "
-        "без активных токенов проверка отключена.\n\n"
-        "**Значения `status` в ответе:**\n"
-        "- `sent` — сообщение отправлено или отредактировано;\n"
-        "- `stored (no active telegram group)` — событие сохранено, но у проекта нет активной группы "
-        "(группа не привязана или выключена командой `/stop`);\n"
-        "- `ignored` — тип события не поддерживается;\n"
-        "- `error` — событие сохранено, но отправить сообщение в Telegram не удалось. "
-        "Код всё равно 200, чтобы GitLab не отключал вебхук."
+            "Принимает события GitLab, сохраняет их в базе и отправляет сообщение в Telegram-группу проекта.\n\n"
+            "Поддерживаются заголовки `X-Gitlab-Event`: **Push Hook**, **Merge Request Hook**, **Pipeline Hook**. "
+            "Остальные события игнорируются.\n\n"
+            "Сообщения о merge request и pipeline **редактируются** при смене статуса, а не отправляются заново. "
+            "Проект создаётся автоматически при первом событии; привязать его к группе можно в админке.\n\n"
+            "Если в админке добавлен активный Signing Token, подпись `webhook-signature` должна ему соответствовать; "
+            "без активных токенов проверка отключена.\n\n"
+            "**Значения `status` в ответе:**\n"
+            "- `sent` — сообщение отправлено или отредактировано;\n"
+            "- `stored (no active telegram group)` — событие сохранено, но у проекта нет активной группы "
+            "(группа не привязана или выключена командой `/stop`);\n"
+            "- `stored (not forwarded)` — событие сохранено, но этот тип в Telegram не отправляется;\n"
+        "- `logged (no project)` — в payload нет имени проекта, событие только записано в лог;\n"
+            "- `error` — событие сохранено, но отправить сообщение в Telegram не удалось. "
+            "Код всё равно 200, чтобы GitLab не отключал вебхук."
     ),
     response_model=StatusResponse,
     responses={
-        400: {"model": ErrorResponse, "description": "Тело запроса не является корректным JSON или не подходит под тип события"},
+        400: {"model": ErrorResponse,
+              "description": "Тело запроса не является корректным JSON или не подходит под тип события"},
         401: {"model": ErrorResponse, "description": "Отсутствует или неверна подпись `webhook-signature`"},
     },
     openapi_extra=REQUEST_BODY_EXAMPLES,
 )
 async def gitlab_webhook(
-    request: Request,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    tg: Annotated[TelegramClient, Depends(get_telegram)],
-    cache: Annotated[Cache, Depends(get_cache)],
-    x_gitlab_event: Annotated[
-        str | None,
-        Header(description="Тип события: `Push Hook`, `Merge Request Hook` или `Pipeline Hook`"),
-    ] = None,
-    webhook_id: Annotated[str | None, Header(description="ID доставки (подпись)")] = None,
-    webhook_timestamp: Annotated[str | None, Header(description="Unix-время доставки (подпись)")] = None,
-    webhook_signature: Annotated[
-        str | None,
-        Header(description="Подпись `v1,<base64>`; проверяется, если в админке есть активный Signing Token"),
-    ] = None,
+        request: Request,
+        session: Annotated[AsyncSession, Depends(get_session)],
+        tg: Annotated[TelegramClient, Depends(get_telegram)],
+        cache: Annotated[Cache, Depends(get_cache)],
+        x_gitlab_event: Annotated[
+            str | None,
+            Header(description="Тип события: `Push Hook`, `Merge Request Hook` или `Pipeline Hook`"),
+        ] = None,
+        webhook_id: Annotated[str | None, Header(description="ID доставки (подпись)")] = None,
+        webhook_timestamp: Annotated[str | None, Header(description="Unix-время доставки (подпись)")] = None,
+        webhook_signature: Annotated[
+            str | None,
+            Header(description="Подпись `v1,<base64>`; проверяется, если в админке есть активный Signing Token"),
+        ] = None,
 ) -> dict:
     body = await request.body()
     tokens = list(await session.scalars(select(WebhookSecret.token).where(WebhookSecret.is_active)))
@@ -121,12 +124,18 @@ async def gitlab_webhook(
 
     try:
         data = json.loads(body)
+        if not isinstance(data, dict):
+            raise ValueError("ожидался JSON-объект")
         event = parse_event(x_gitlab_event or "", data)
     except (ValueError, ValidationError) as e:  # ValueError covers invalid JSON
         raise HTTPException(status_code=400, detail=f"Некорректное тело запроса: {e}")
 
-    if event is None:
-        return {"status": "ignored"}
+    log.info(
+        "gitlab event: header=%r kind=%s project=%s status=%r branch=%r user=%s",
+        event.header, event.kind.name, event.project_name, event.status, event.branch, event.user.username,
+    )
+    if event.kind == EventKind.UNKNOWN:
+        log.warning("unknown gitlab event %r, payload keys: %s", event.header, sorted(data) if isinstance(data, dict) else data)
 
     try:
         result = await process_event(session, tg, cache, event)

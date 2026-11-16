@@ -102,5 +102,6 @@ class WebhookSecretAdmin(ModelView, model=WebhookSecret):
 
 def setup_admin(app: FastAPI, engine: AsyncEngine, settings: Settings) -> None:
     admin = Admin(app, engine, authentication_backend=AdminAuth(settings), title="GitLab Event Bot")
-    for view in (GitlabProjectAdmin, GitlabUserAdmin, GitLabEventAdmin, TelegramAdminAdmin, TelegramGroupAdmin, WebhookSecretAdmin):
+    for view in (GitlabProjectAdmin, GitlabUserAdmin, GitLabEventAdmin, TelegramAdminAdmin, TelegramGroupAdmin,
+                 WebhookSecretAdmin):
         admin.add_view(view)

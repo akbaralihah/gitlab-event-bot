@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import GitlabProject, GitLabEvent, GitlabUser
+from app.schemas.enums import TELEGRAM_KINDS
 from app.schemas.gitlab import ParsedEvent
 from app.services.cache import Cache
 from app.services.formatter import build_message
@@ -31,19 +32,24 @@ async def get_or_create_project(session: AsyncSession, name: str) -> GitlabProje
 
 async def process_event(session: AsyncSession, tg: TelegramClient, cache: Cache, event: ParsedEvent) -> str:
     """Store the event and forward it to the project's Telegram group. Returns a status string."""
+    if not event.project_name:
+        return "logged (no project)"
     project = await get_or_create_project(session, event.project_name)
 
     session.add(
         GitLabEvent(
-            gitlab_event=event.kind,
+            gitlab_event=event.kind.value,
             project_id=project.id,
-            status=event.status,
-            branch=event.branch,
-            user_name=event.user.username,
+            status=str(event.status)[:50],
+            branch=event.branch[:255],
+            user_name=(event.user.username or None) and event.user.username[:255],
             duration=event.duration,
         )
     )
     await session.commit()
+
+    if event.kind not in TELEGRAM_KINDS:
+        return "stored (not forwarded)"
 
     group = project.telegram_group
     if group is None or not group.is_active:

@@ -44,14 +44,14 @@ REQUEST_BODY_EXAMPLE = {
     "/telegram/webhook",
     summary="Вебхук Telegram",
     description=(
-        "Принимает обновления (`Update`) от Telegram. Адрес регистрируется у Telegram автоматически "
-        "при запуске приложения (`PROJECT_URL/api/telegram/webhook`), вручную вызывать его не нужно.\n\n"
-        "Обрабатываются команды:\n"
-        "- в личном чате: `/start` — привязка GitLab ID к Telegram-аккаунту;\n"
-        "- в группе (только для администраторов бота): `/register`, `/start`, `/stop`.\n\n"
-        "Если задан `WEBHOOK_SECRET`, заголовок `X-Telegram-Bot-Api-Secret-Token` должен совпадать с ним.\n\n"
-        "Ответ всегда `200`, даже если обработчик упал (ошибка пишется в лог): "
-        "иначе Telegram будет бесконечно присылать это же обновление повторно."
+            "Принимает обновления (`Update`) от Telegram. Адрес регистрируется у Telegram автоматически "
+            "при запуске приложения (`PROJECT_URL/api/telegram/webhook`), вручную вызывать его не нужно.\n\n"
+            "Обрабатываются команды:\n"
+            "- в личном чате: `/start` — привязка GitLab ID к Telegram-аккаунту;\n"
+            "- в группе (только для администраторов бота): `/register`, `/start`, `/stop`.\n\n"
+            "Если задан `WEBHOOK_SECRET`, заголовок `X-Telegram-Bot-Api-Secret-Token` должен совпадать с ним.\n\n"
+            "Ответ всегда `200`, даже если обработчик упал (ошибка пишется в лог): "
+            "иначе Telegram будет бесконечно присылать это же обновление повторно."
     ),
     response_model=StatusResponse,
     responses={
@@ -61,16 +61,17 @@ REQUEST_BODY_EXAMPLE = {
     openapi_extra=REQUEST_BODY_EXAMPLE,
 )
 async def telegram_webhook(
-    request: Request,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    tg: Annotated[TelegramClient, Depends(get_telegram)],
-    cache: Annotated[Cache, Depends(get_cache)],
-    settings: Annotated[Settings, Depends(get_settings)],
-    bot_username: Annotated[str, Depends(get_bot_username)],
-    x_telegram_bot_api_secret_token: Annotated[
-        str | None,
-        Header(description="Секретный токен, переданный Telegram при `setWebhook`; проверяется, если задан `WEBHOOK_SECRET`"),
-    ] = None,
+        request: Request,
+        session: Annotated[AsyncSession, Depends(get_session)],
+        tg: Annotated[TelegramClient, Depends(get_telegram)],
+        cache: Annotated[Cache, Depends(get_cache)],
+        settings: Annotated[Settings, Depends(get_settings)],
+        bot_username: Annotated[str, Depends(get_bot_username)],
+        x_telegram_bot_api_secret_token: Annotated[
+            str | None,
+            Header(
+                description="Секретный токен, переданный Telegram при `setWebhook`; проверяется, если задан `WEBHOOK_SECRET`"),
+        ] = None,
 ) -> dict:
     secret = settings.webhook_secret
     if secret and not compare_digest((x_telegram_bot_api_secret_token or "").encode(), secret.encode()):

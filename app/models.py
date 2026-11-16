@@ -85,7 +85,7 @@ class GitLabEvent(Base):
     __tablename__ = "gitlab_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    gitlab_event: Mapped[str] = mapped_column(String(20))  # push | merge | pipeline
+    gitlab_event: Mapped[str] = mapped_column(String(20))  # EventKind value
     project_id: Mapped[int] = mapped_column(ForeignKey("gitlab_projects.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(String(50))
     branch: Mapped[str] = mapped_column(String(255))

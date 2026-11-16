@@ -14,6 +14,7 @@ from app.models import TelegramAdmin
 from app.services.cache import Cache
 from app.telegram.client import TelegramClient
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
 
 
