@@ -143,4 +143,5 @@ async def gitlab_webhook(
         # The event is already stored, a Telegram failure must not make GitLab disable the webhook.
         log.exception("failed to forward %s event of %s", event.kind, event.project_name)
         return {"status": "error"}
+    log.info("result: %s (%s %s of %s)", result, event.kind.name, event.status, event.project_name)
     return {"status": result}

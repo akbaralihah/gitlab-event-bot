@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.models import GitlabProject, GitLabEvent, GitlabUser
-from app.schemas.enums import TELEGRAM_KINDS
+from app.schemas.enums import TELEGRAM_KINDS, EventKind, Status
 from app.schemas.gitlab import ParsedEvent
 from app.services.cache import Cache
 from app.services.flow import Flow
@@ -32,6 +32,17 @@ async def get_or_create_project(session: AsyncSession, name: str) -> GitlabProje
     except IntegrityError:  # created by a parallel request
         await session.rollback()
     return await session.scalar(query)
+
+
+# pipeline statuses worth a fresh (notifying) message
+NOTIFY_PIPELINE_STATUSES = {Status.SUCCESS, Status.FAILED, Status.CANCELED, Status.MANUAL}
+
+
+def starts_new_message(event: ParsedEvent) -> bool:
+    """A push and a finished pipeline get a new message; the rest edits the current one."""
+    return event.kind == EventKind.PUSH or (
+        event.kind == EventKind.PIPELINE and event.status in NOTIFY_PIPELINE_STATUSES
+    )
 
 
 async def process_event(session: AsyncSession, tg: TelegramClient, cache: Cache, event: ParsedEvent) -> str:
@@ -57,6 +68,9 @@ async def process_event(session: AsyncSession, tg: TelegramClient, cache: Cache,
 
     group = project.telegram_group
     if group is None or not group.is_active:
+        log.warning(
+            "project %r: %s", project.name, "no telegram group linked" if group is None else f"group {group} is not active"
+        )
         return "stored (no active telegram group)"
 
     key = f"flow:{project.id}:{event.branch}"
@@ -64,6 +78,9 @@ async def process_event(session: AsyncSession, tg: TelegramClient, cache: Cache,
         raw = await cache.get_flow(key)
         flow = Flow.from_json(raw) if raw else Flow(project=project.name, branch=event.branch)
         flow.apply(event, datetime.now(ZoneInfo(get_settings().timezone)))
+        if starts_new_message(event):
+            # Editing never notifies and does not move a message down the chat: send a fresh one.
+            await cache.delete_message_id(key)
 
         telegram_ids: dict[int, int] = {}
         if flow.user_ids:

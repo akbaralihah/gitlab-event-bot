@@ -86,8 +86,10 @@ class Flow:
         self.status = event.status
         self.protected = event.protected
         self.branch_url, self.compare_url = event.branch_url, event.compare_url
-        self.commits = ([c.model_dump() for c in event.commits] + self.commits)[:MAX_COMMITS]
-        self.total_commits += event.total_commits
+        # every push is shown as its own message: its commits, a fresh pipeline
+        self.commits = [c.model_dump() for c in event.commits][-MAX_COMMITS:]
+        self.total_commits = event.total_commits
+        self.pipeline_id = self.pipeline_status = self.pipeline_duration = None
         who = event.user.username or event.user.name or "?"
         if event.status == Status.CREATED:
             return f"{_emoji(event.status)} branch created by {who}"
