@@ -4,6 +4,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Index,
     DateTime,
     ForeignKey,
     String,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     Text,
     func,
     false,
+    text,
     true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,10 +28,14 @@ gitlab_users_projects = Table(
 
 
 class TelegramGroup(Base):
+    """One row is one place messages go to: a chat, or one topic of a forum chat."""
+
     __tablename__ = "telegram_groups"
+    # a chat may have several topics; a chat without topics (thread id NULL) counts as topic 0
+    __table_args__ = (Index("uq_telegram_groups_chat_topic", "chat_id", func.coalesce(text("message_thread_id"), 0), unique=True),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger)
     chat_name: Mapped[str] = mapped_column(String(255))
     chat_type: Mapped[str] = mapped_column(String(50))
     username: Mapped[str | None] = mapped_column(String(255))
@@ -43,7 +49,8 @@ class TelegramGroup(Base):
     projects: Mapped[list["GitlabProject"]] = relationship(back_populates="telegram_group")
 
     def __str__(self) -> str:
-        return f"{self.chat_name} ({self.chat_id})"
+        topic = f" / {self.message_thread_name or self.message_thread_id}" if self.message_thread_id else ""
+        return f"{self.chat_name}{topic} ({self.chat_id})"
 
 
 class GitlabProject(Base):

@@ -47,8 +47,14 @@ class PushPayload(BaseModel):
     user_name: str | None = None
 
 
+class GLLabel(BaseModel):
+    title: str = ""
+
+
 class MergeAttrs(BaseModel):
     id: int
+    iid: int | None = None
+    title: str = ""
     source_branch: str = ""
     target_branch: str = ""
     state: str = ""
@@ -61,6 +67,7 @@ class MergePayload(BaseModel):
     project: GLProject
     user: GLUser = Field(default_factory=GLUser)
     object_attributes: MergeAttrs
+    labels: list[GLLabel] = []
     assignees: list[GLUser] = []
     reviewers: list[GLUser] = []
 
@@ -92,6 +99,17 @@ class ParsedEvent:
     draft: bool = False
     assignees: list[GLUser] = field(default_factory=list)
     reviewers: list[GLUser] = field(default_factory=list)
+    # merge request details
+    title: str | None = None
+    iid: int | None = None
+    labels: list[str] = field(default_factory=list)
+    pipeline_id: int | None = None
+    # comment (note) details
+    note_id: int | None = None
+    note: str | None = None
+    note_url: str | None = None
+    note_action: str = "create"
+    forward: bool = True  # False: only stored and logged
     # push details
     commits: list[GLCommit] = field(default_factory=list)
     total_commits: int = 0
@@ -177,6 +195,26 @@ def _parse_generic(kind: EventKind, header: str, data: dict) -> ParsedEvent:
     )
 
 
+def _parse_note(header: str, data: dict) -> ParsedEvent:
+    """A comment. Comments on a merge request are folded into that merge request's message."""
+    event = _parse_generic(EventKind.NOTE, header, data)
+    attrs = data.get("object_attributes") if isinstance(data.get("object_attributes"), dict) else {}
+    mr = data.get("merge_request")
+    if attrs.get("noteable_type") != "MergeRequest" or not isinstance(mr, dict):
+        event.forward = False
+        return event
+    event.branch = mr.get("source_branch") or ""
+    event.target_branch = mr.get("target_branch")
+    event.iid, event.title, event.url = mr.get("iid"), mr.get("title"), mr.get("url")
+    event.draft = bool(mr.get("draft") or mr.get("work_in_progress"))
+    event.status = str(mr.get("state") or "")
+    event.note_id = attrs.get("id")
+    event.note = attrs.get("note") or ""
+    event.note_url = attrs.get("url")
+    event.note_action = attrs.get("action") or "create"
+    return event
+
+
 def parse_event(header: str, data: dict) -> ParsedEvent:
     """Never returns None: every event is accepted. Raises pydantic.ValidationError only for the three
     events that are forwarded to Telegram when their payload is malformed."""
@@ -224,6 +262,9 @@ def parse_event(header: str, data: dict) -> ParsedEvent:
             user=p.user,
             url=a.url,
             draft=a.draft,
+            title=a.title,
+            iid=a.iid,
+            labels=[label.title for label in p.labels if label.title],
             assignees=p.assignees,
             reviewers=p.reviewers,
             tracking_key=f"merge:{a.id}:{a.source_branch}",
@@ -241,7 +282,11 @@ def parse_event(header: str, data: dict) -> ParsedEvent:
             branch=_short_ref(a.ref),
             user=p.user or GLUser(),
             duration=a.duration,
+            pipeline_id=a.id,
             tracking_key=f"pipeline:{a.id}:{a.ref}",
         )
+
+    if kind == EventKind.NOTE:
+        return _parse_note(header, data)
 
     return _parse_generic(kind, header, data)

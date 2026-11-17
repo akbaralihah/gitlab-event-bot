@@ -35,6 +35,17 @@ class Cache:
     async def clear_registration(self, telegram_id: int) -> None:
         await self.redis.delete(f"tg:registering:{telegram_id}")
 
+    # ---- state of one message (see services/flow.py) ----
+
+    async def get_flow(self, key: str) -> str | None:
+        return await self.redis.get(f"tg:flow:{key}")
+
+    async def set_flow(self, key: str, raw: str, ttl: int = MESSAGE_TTL) -> None:
+        await self.redis.set(f"tg:flow:{key}", raw, ex=ttl)
+
+    async def delete_flow(self, key: str) -> None:
+        await self.redis.delete(f"tg:flow:{key}")
+
     @asynccontextmanager
     async def lock(self, key: str):
         """Serializes events of one MR/pipeline, GitLab sends them almost simultaneously."""

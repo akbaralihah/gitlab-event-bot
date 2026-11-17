@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(".env", "local.env"), extra="ignore")
 
     debug: bool = False
+    # timezone of the times in the message history (IANA name)
+    timezone: str = "UTC"
 
     # Telegram
     telegram_bot_token: str

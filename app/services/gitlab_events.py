@@ -1,14 +1,18 @@
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.models import GitlabProject, GitLabEvent, GitlabUser
 from app.schemas.enums import TELEGRAM_KINDS
 from app.schemas.gitlab import ParsedEvent
 from app.services.cache import Cache
+from app.services.flow import Flow
 from app.services.formatter import build_message
 from app.services.notify import send_or_edit
 from app.telegram.client import TelegramClient
@@ -48,27 +52,37 @@ async def process_event(session: AsyncSession, tg: TelegramClient, cache: Cache,
     )
     await session.commit()
 
-    if event.kind not in TELEGRAM_KINDS:
+    if event.kind not in TELEGRAM_KINDS or not event.forward:
         return "stored (not forwarded)"
 
     group = project.telegram_group
     if group is None or not group.is_active:
         return "stored (no active telegram group)"
 
-    telegram_ids: dict[int, int] = {}
-    if event.gitlab_ids:
-        rows = await session.execute(
-            select(GitlabUser.gitlab_id, GitlabUser.telegram_id).where(GitlabUser.gitlab_id.in_(event.gitlab_ids))
-        )
-        telegram_ids = {gitlab_id: telegram_id for gitlab_id, telegram_id in rows}
+    key = f"flow:{project.id}:{event.branch}"
+    async with cache.lock(key):
+        raw = await cache.get_flow(key)
+        flow = Flow.from_json(raw) if raw else Flow(project=project.name, branch=event.branch)
+        flow.apply(event, datetime.now(ZoneInfo(get_settings().timezone)))
 
-    await send_or_edit(
-        tg,
-        cache,
-        chat_id=group.chat_id,
-        thread_id=group.message_thread_id,
-        text=build_message(event, project, telegram_ids),
-        key=event.tracking_key,
-        final=event.is_final,
-    )
+        telegram_ids: dict[int, int] = {}
+        if flow.user_ids:
+            rows = await session.execute(
+                select(GitlabUser.gitlab_id, GitlabUser.telegram_id).where(GitlabUser.gitlab_id.in_(flow.user_ids))
+            )
+            telegram_ids = {gitlab_id: telegram_id for gitlab_id, telegram_id in rows}
+
+        await send_or_edit(
+            tg,
+            cache,
+            chat_id=group.chat_id,
+            thread_id=group.message_thread_id,
+            text=build_message(flow, project, telegram_ids),
+            key=key,
+            final=event.is_final,
+        )
+        if event.is_final:
+            await cache.delete_flow(key)
+        else:
+            await cache.set_flow(key, flow.to_json())
     return "sent"

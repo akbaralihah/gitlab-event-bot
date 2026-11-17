@@ -83,15 +83,17 @@ async def _handle_private(
 # ---------- group chat: admins manage where notifications go ----------
 
 
-async def _get_group(session: AsyncSession, chat_id: int) -> TelegramGroup | None:
-    return await session.scalar(select(TelegramGroup).where(TelegramGroup.chat_id == chat_id))
+async def _get_group(session: AsyncSession, chat_id: int, topic_id: int | None) -> TelegramGroup | None:
+    """A group row is a chat plus one of its topics (topic_id None: a chat without topics / General)."""
+    topic = TelegramGroup.message_thread_id.is_(None) if topic_id is None else TelegramGroup.message_thread_id == topic_id
+    return await session.scalar(select(TelegramGroup).where(TelegramGroup.chat_id == chat_id, topic))
 
 
 async def _group_register(message: Message, session: AsyncSession, tg: TelegramClient) -> None:
     chat = message.chat
     topic = message.reply_to_message.forum_topic_created if message.reply_to_message else None
 
-    group = await _get_group(session, chat.id)
+    group = await _get_group(session, chat.id, message.topic_id)
     if group is None:
         group = TelegramGroup(chat_id=chat.id)
         session.add(group)
@@ -101,13 +103,14 @@ async def _group_register(message: Message, session: AsyncSession, tg: TelegramC
     group.is_forum = chat.is_forum
     group.message_thread_id = message.topic_id
     group.message_thread_name = topic.name if topic and message.topic_id else None
+    group.is_active = True
     await session.commit()
 
-    await _reply(tg, message, "✅ Guruh muvaffaqiyatli ro'yxatdan o'tkazildi.")
+    await _reply(tg, message, "✅ Guruh muvaffaqiyatli ro'yxatdan o'tkazildi va bot ishga tushdi.")
 
 
 async def _group_start(message: Message, session: AsyncSession, tg: TelegramClient) -> None:
-    group = await _get_group(session, message.chat.id)
+    group = await _get_group(session, message.chat.id, message.topic_id)
     if group is None:
         await _reply(tg, message, "❗️ Avval /register buyrug'ini yuboring.")
     elif group.is_active:
@@ -119,7 +122,7 @@ async def _group_start(message: Message, session: AsyncSession, tg: TelegramClie
 
 
 async def _group_stop(message: Message, session: AsyncSession, tg: TelegramClient) -> None:
-    group = await _get_group(session, message.chat.id)
+    group = await _get_group(session, message.chat.id, message.topic_id)
     if group is None:
         await _reply(tg, message, "❗️ Avval /register buyrug'ini yuboring.")
     elif not group.is_active:

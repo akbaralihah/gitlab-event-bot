@@ -1,41 +1,28 @@
 from html import escape
 
 from app.models import GitlabProject
-from app.schemas.enums import EventKind, Status
-from app.schemas.gitlab import GLUser, ParsedEvent
+from app.schemas.enums import STATUS_EMOJI
+from app.schemas.gitlab import GLUser
+from app.services.flow import Flow
 
-STATUS_EMOJI = {
-    Status.PUSHED: "✅",
-    Status.DELETED: "🗑",
-    Status.OPENED: "✨",
-    Status.REOPENED: "🔄",
-    Status.UPDATED: "📝",
-    Status.MERGED: "🤝",
-    Status.CLOSED: "🔒",
-    Status.APPROVED: "👍",
-    Status.UNAPPROVED: "👎",
-    Status.APPROVAL: "✅",
-    Status.UNAPPROVAL: "❌",
-    Status.CREATED: "🆕",
-    Status.PREPARING: "🛠",
-    Status.WAITING_FOR_RESOURCE: "⌛",
-    Status.PENDING: "⏳",
-    Status.RUNNING: "🏃",
-    Status.SUCCESS: "🟢",
-    Status.FAILED: "🔴",
-    Status.CANCELED: "⚪",
-    Status.SKIPPED: "⏭️",
-    Status.MANUAL: "✋",
-    Status.SCHEDULED: "🗓",
-    Status.BLOCKED: "⛔",
-}
+TELEGRAM_LIMIT = 4096
+SAFE_LIMIT = 3900  # leave room for the tags
 
 
 def _code(value: object) -> str:
     return f"<code>{escape(str(value))}</code>"
 
 
-def mention(user: GLUser, telegram_ids: dict[int, int]) -> str:
+def _link(url: str, label: str) -> str:
+    return f'<a href="{escape(url, quote=True)}">{escape(label)}</a>'
+
+
+def _status(status: str) -> str:
+    return f"{status} {STATUS_EMOJI.get(status, '')}".strip()
+
+
+def mention(user: GLUser | dict, telegram_ids: dict[int, int]) -> str:
+    user = user if isinstance(user, GLUser) else GLUser(**user)
     name = escape(user.name or user.username or "unknown")
     telegram_id = telegram_ids.get(user.id) if user.id is not None else None
     if telegram_id:
@@ -43,63 +30,79 @@ def mention(user: GLUser, telegram_ids: dict[int, int]) -> str:
     return name
 
 
-MAX_COMMITS = 5
-
-
-def _push_commits(event: ParsedEvent) -> list[str]:
-    lines = [f"📦 <b>Commits:</b> {_code(event.total_commits)}"]
-    for c in event.commits[:MAX_COMMITS]:
-        title = escape(c.title[:80] + ("…" if len(c.title) > 80 else ""))
-        sha = escape(c.id[:8])
-        label = f'<a href="{escape(c.url, quote=True)}">{sha}</a>' if c.url else f"<code>{sha}</code>"
-        author = f" — {escape(c.author.name)}" if c.author.name else ""
-        lines.append(f"  • {label} {title}{author}")
-    if event.total_commits > MAX_COMMITS:
-        lines.append(f"  … and {event.total_commits - MAX_COMMITS} more")
-    return lines
-
-
-def build_message(event: ParsedEvent, project: GitlabProject, telegram_ids: dict[int, int]) -> str:
-    """Render an event as Telegram HTML. `telegram_ids` maps gitlab_id -> telegram_id."""
-    lines = [f"🚀 <b>Event Update:</b> {_code(event.header)}"]
+def _render(flow: Flow, project: GitlabProject, telegram_ids: dict[int, int], history: list[str]) -> str:
+    if flow.iid is not None or flow.mr_status:
+        head = f"🔀 <b>Merge Request{f' !{flow.iid}' if flow.iid else ''}</b>"
+        if project.show_status and flow.mr_status:
+            head += f" · {_code(_status(flow.mr_status))}"
+        if flow.draft:
+            head += " · 🚧 <b>Draft</b>"
+    else:
+        head = "🌿 <b>Branch</b>"
+        if project.show_status and flow.status:
+            head += f" · {_code(_status(flow.status))}"
+    lines = [head]
 
     if project.show_project:
-        lines.append(f"📣 <b>Project:</b> {_code(project.name)}")
-        if event.kind == EventKind.MERGE_REQUEST:
-            lines.append(f"📑 <b>Is Draft:</b> {_code(event.draft)}")
-    if project.show_status:
-        emoji = STATUS_EMOJI.get(event.status, "")
-        status = f"{event.status} {emoji}".strip()
-        lines.append(f"📌 <b>Status:</b> {_code(status)}")
-        if event.kind == EventKind.PUSH and event.protected:
-            lines.append(f"🛡 <b>Protected:</b> {_code('yes')}")
+        lines.append(f"📣 {_code(flow.project)}")
+    if flow.title:
+        lines.append(f"📝 {_link(flow.url, flow.title) if flow.url else f'<b>{escape(flow.title)}</b>'}")
     if project.show_branch:
-        if event.kind == EventKind.MERGE_REQUEST:
-            lines.append(f"🌿 <b>Source:</b> {_code(event.branch)}")
-            lines.append(f"🎯 <b>Target:</b> {_code(event.target_branch)}")
-        else:
-            lines.append(f"🌿 <b>Branch:</b> {_code(event.branch)}")
-    if project.show_user:
-        lines.append(f"👤 <b>User:</b> {mention(event.user, telegram_ids)}")
-        if event.assignees:
-            lines.append("👥 <b>Assignees:</b>")
-            lines += [f"  • {mention(u, telegram_ids)}" for u in event.assignees]
-        if event.reviewers:
-            lines.append("👁 <b>Reviewers:</b>")
-            lines += [f"  • {mention(u, telegram_ids)}" for u in event.reviewers]
-    if event.kind == EventKind.PUSH and event.commits:
-        lines += _push_commits(event)
-    if event.url:
-        lines.append(f'🔗 <b>Link:</b> <a href="{escape(event.url, quote=True)}">tap to view</a>')
-    if event.kind == EventKind.PUSH:
-        links = [
-            f'<a href="{escape(url, quote=True)}">{label}</a>'
-            for label, url in (("branch", event.branch_url), ("compare", event.compare_url))
-            if url
-        ]
-        if links:
-            lines.append(f"🔗 <b>Links:</b> {' · '.join(links)}")
-    if project.show_duration and event.kind == EventKind.PIPELINE and event.duration is not None:
-        lines.append(f"⏳ <b>Duration:</b> {_code(f'{event.duration}s')}")
+        branch = _code(flow.branch)
+        lines.append(f"🌿 {branch} → {_code(flow.target_branch)}" if flow.target_branch else f"🌿 {branch}")
+        if flow.protected:
+            lines[-1] += " 🛡"
+    if project.show_user and flow.user:
+        lines.append(f"👤 {mention(flow.user, telegram_ids)}")
+        if flow.assignees:
+            lines.append("👥 <b>Assignees:</b> " + ", ".join(mention(u, telegram_ids) for u in flow.assignees))
+        if flow.reviewers:
+            lines.append("👁 <b>Reviewers:</b> " + ", ".join(mention(u, telegram_ids) for u in flow.reviewers))
+    if flow.labels:
+        lines.append("🏷 " + " ".join(_code(label) for label in flow.labels))
 
+    if flow.pipeline_id is not None:
+        pipeline = f"🏗 <b>Pipeline #{flow.pipeline_id}</b>"
+        if project.show_status and flow.pipeline_status:
+            pipeline += f" · {_code(_status(flow.pipeline_status))}"
+        if project.show_duration and flow.pipeline_duration is not None:
+            pipeline += f" · ⏳ {_code(f'{flow.pipeline_duration}s')}"
+        lines.append(pipeline)
+
+    if flow.commits:
+        lines.append(f"📦 <b>Commits:</b> {_code(flow.total_commits)}")
+        commits = []
+        for c in flow.commits:
+            title = escape(c["title"][:80] + ("…" if len(c["title"]) > 80 else ""))
+            sha = c["id"][:8]
+            label = _link(c["url"], sha) if c.get("url") else _code(sha)
+            author = (c.get("author") or {}).get("name")
+            commits.append(f"{label} {title}" + (f" — {escape(author)}" if author else ""))
+        lines.append("<blockquote expandable>" + "\n".join(commits) + "</blockquote>")
+
+    if flow.comments:
+        rows = []
+        for c in flow.comments:
+            text = escape(c["text"]) or "…"
+            rows.append(f"<b>{escape(c['author'])}:</b> " + (_link(c["url"], c["text"] or "…") if c.get("url") else text))
+        lines.append(f"💬 <b>Comments:</b> {_code(flow.total_comments)}")
+        lines.append("<blockquote expandable>" + "\n".join(rows) + "</blockquote>")
+
+    links = [_link(url, label) for label, url in (("branch", flow.branch_url), ("compare", flow.compare_url)) if url]
+    if links:
+        lines.append("🔗 " + " · ".join(links))
+
+    if history:
+        lines.append("📜 <b>History</b>\n<blockquote expandable>" + "\n".join(escape(h) for h in history) + "</blockquote>")
     return "\n".join(lines)
+
+
+def build_message(flow: Flow, project: GitlabProject, telegram_ids: dict[int, int]) -> str:
+    """Render the state of a branch as Telegram HTML. `telegram_ids` maps gitlab_id -> telegram_id.
+    The oldest history lines are dropped until the text fits into a Telegram message."""
+    history = list(flow.history)
+    text = _render(flow, project, telegram_ids, history)
+    while len(text) > SAFE_LIMIT and history:
+        history.pop(0)
+        text = _render(flow, project, telegram_ids, history)
+    return text[:TELEGRAM_LIMIT]

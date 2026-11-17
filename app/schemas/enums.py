@@ -56,7 +56,8 @@ class Status(StrEnum):
 
 
 # Kinds that are forwarded to Telegram; the rest are stored and logged only.
-TELEGRAM_KINDS = frozenset({EventKind.PUSH, EventKind.MERGE_REQUEST, EventKind.PIPELINE})
+# Notes are forwarded only when they belong to a merge request (see ParsedEvent.forward).
+TELEGRAM_KINDS = frozenset({EventKind.PUSH, EventKind.MERGE_REQUEST, EventKind.PIPELINE, EventKind.NOTE})
 
 # value of the X-Gitlab-Event header -> kind
 EVENT_HEADERS: dict[str, EventKind] = {
@@ -103,4 +104,30 @@ OBJECT_KINDS: dict[str, EventKind] = {
     "subgroup": EventKind.SUBGROUP,
     "vulnerability": EventKind.VULNERABILITY,
     "work_item": EventKind.WORK_ITEM,
+}
+
+STATUS_EMOJI = {
+    Status.PUSHED: "✅",
+    Status.DELETED: "🗑",
+    Status.OPENED: "✨",
+    Status.REOPENED: "🔄",
+    Status.UPDATED: "📝",
+    Status.MERGED: "🤝",
+    Status.CLOSED: "🔒",
+    Status.APPROVED: "👍",
+    Status.UNAPPROVED: "👎",
+    Status.APPROVAL: "✅",
+    Status.UNAPPROVAL: "❌",
+    Status.CREATED: "🆕",
+    Status.PREPARING: "🛠",
+    Status.WAITING_FOR_RESOURCE: "⌛",
+    Status.PENDING: "⏳",
+    Status.RUNNING: "🏃",
+    Status.SUCCESS: "🟢",
+    Status.FAILED: "🔴",
+    Status.CANCELED: "⚪",
+    Status.SKIPPED: "⏭️",
+    Status.MANUAL: "✋",
+    Status.SCHEDULED: "🗓",
+    Status.BLOCKED: "⛔",
 }

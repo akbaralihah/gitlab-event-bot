@@ -13,6 +13,7 @@ dependencies = [
     "redis==8.1.0",
     "sqladmin==0.32.0",
     "sqlalchemy[asyncio]==2.1.8",
+    "tzdata>=2026.6",
     "uvicorn==0.54.0",
 ]
 

@@ -89,7 +89,6 @@ class TelegramGroupAdmin(ModelView, model=TelegramGroup):
         TelegramGroup.registered_at,
     ]
     column_searchable_list = [TelegramGroup.chat_name, TelegramGroup.username]
-    form_excluded_columns = [TelegramGroup.projects]
 
 
 class WebhookSecretAdmin(ModelView, model=WebhookSecret):
